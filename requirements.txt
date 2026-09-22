@@ -1,0 +1,20 @@
+fastapi==0.141.1
+uvicorn==0.53.0
+python-multipart==0.0.32
+pillow==12.3.0
+numpy==2.2.6
+scipy==1.15.3
+opencv-python-headless==5.0.0.93
+invisible-watermark==0.2.0
+httpx==0.28.1
+pytest
+# torch/torchaudio resolve via --extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.0+cpu
+torchaudio==2.11.0+cpu
+# phase-2 deps already provisioned in the venv
+pikepdf==10.13.0.post1
+mutagen==1.48.1
+soundfile==0.14.0
+librosa==0.11.0
+audioseal==0.2.0
+wavmark==0.0.3

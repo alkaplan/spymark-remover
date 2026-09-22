@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Spymark Remover</title>
+<style>
+body{font-family:system-ui,sans-serif;max-width:760px;margin:24px auto;padding:0 12px;color:#111}
+h1{font-size:20px;margin:0 0 4px}
+.sub{color:#444;font-size:13px;margin-bottom:16px}
+.tabs button{padding:6px 14px;border:1px solid #888;background:#fff;cursor:pointer}
+.tabs button.on{background:#eee;font-weight:600}
+.panel{margin-top:14px}
+table{border-collapse:collapse;width:100%;font-size:13px;margin-top:8px}
+th,td{border:1px solid #999;padding:4px 6px;text-align:left;vertical-align:top}
+th{background:#eee}
+.sev-high{color:#c00;font-weight:600}.sev-medium{color:#c60;font-weight:600}
+button{padding:6px 12px;border:1px solid #888;background:#fff;cursor:pointer;margin-top:8px}
+textarea{width:100%;height:140px;font-family:ui-monospace,monospace;font-size:12px;border:1px solid #888;margin-top:6px}
+select{padding:5px;border:1px solid #888;margin-top:8px}
+#drop{border:1px dashed #888;padding:22px;text-align:center;color:#555;margin-top:8px}
+img.viz{max-width:256px;border:1px solid #999;margin:6px 8px 0 0}
+.vizrow{display:flex;gap:12px;flex-wrap:wrap}
+.vizrow div{max-width:256px}
+.caption{font-size:11px;color:#555}
+.note{font-size:12px;color:#444;border-top:1px solid #ccc;margin-top:24px;padding-top:8px}
+label{font-size:13px;margin-right:12px;white-space:nowrap}
+.opts{margin-top:8px;line-height:1.9}
+#status{margin-top:8px;font-size:13px;color:#333}
+ul{font-size:13px}
+</style>
+</head>
+<body>
+<h1>Spymark Remover</h1>
+<div class="sub">Finds and removes hidden tracking signals in files. Runs locally; files never leave this machine.</div>
+
+<div class="tabs">
+<button id="tab-file" class="on">File</button>
+<button id="tab-text">Text</button>
+</div>
+
+<div id="panel-file" class="panel">
+<div id="drop">Drop a file here or <input type="file" id="fileinput"></div>
+<div id="status"></div>
+<div id="fileresult"></div>
+<div id="fileclean" style="display:none">
+<select id="strength">
+<option value="light">Light — metadata only + mild resample</option>
+<option value="standard" selected>Standard — metadata + geometric/spectral/temporal perturbation + recompress</option>
+<option value="heavy">Heavy — stronger perturbation; some quality loss</option>
+</select><br>
+<button id="cleanbtn">Remove spy marks</button>
+<div id="cleanresult"></div>
+</div>
+</div>
+
+<div id="panel-text" class="panel" style="display:none">
+<textarea id="tin" placeholder="Paste text here…"></textarea>
+<div class="opts" id="opts"></div>
+<button id="tanalyze">Analyze</button>
+<button id="tclean">Remove spy marks</button>
+<div id="tresult"></div>
+<div id="tcleanout" style="display:none">
+<textarea id="tout" readonly></textarea>
+<button id="tcopy">Copy</button>
+<button id="tdl">Download .txt</button>
+<button id="tpara" style="display:none">Paraphrase with Claude (defeats statistical text watermarks like SynthID-Text)</button>
+</div>
+</div>
+
+<div class="note">
+Deep-learned watermarks (Google SynthID, Meta Stable Signature) have no public detector. Standard/Heavy modes apply the transformations published research shows degrade them, but removal cannot be verified locally.<br>
+Statistical text watermarks (SynthID-Text) can only be defeated by rewriting.
+</div>
+
+<script>
+const $=id=>document.getElementById(id);
+let lastFile=null;
+
+$("tab-file").onclick=()=>{$("tab-file").className="on";$("tab-text").className="";$("panel-file").style.display="";$("panel-text").style.display="none"};
+$("tab-text").onclick=()=>{$("tab-text").className="on";$("tab-file").className="";$("panel-text").style.display="";$("panel-file").style.display="none"};
+
+function sev(s){return `<span class="sev-${s}">${s}</span>`}
+function table(findings){
+ if(!findings||!findings.length)return "<p>No spy marks detected.</p>";
+ let r="<table><tr><th>Name</th><th>Severity</th><th>Confidence</th><th>Evidence</th><th>Removable</th></tr>";
+ for(const f of findings)r+=`<tr><td>${f.name}</td><td>${sev(f.severity)}</td><td>${f.confidence}</td><td style="font-size:11px">${f.evidence}</td><td>${f.removable?"yes":"no"}</td></tr>`;
+ return r+"</table>";
+}
+function esc(s){return s}
+
+async function analyze(file){
+ lastFile=file;
+ const fd=new FormData();fd.append("file",file);
+ $("status").textContent="Working…";
+ $("fileresult").innerHTML="";$("cleanresult").innerHTML="";
+ try{
+  const r=await fetch("/api/analyze",{method:"POST",body:fd});
+  const j=await r.json();
+  $("status").textContent="";
+  if(!r.ok){$("fileresult").innerHTML=`<p>Error: ${j.detail}</p>`;$("fileclean").style.display="none";return}
+  let h=`<p><b>${esc(j.filename)}</b> — kind: ${j.kind}</p>`+table(j.findings);
+  if(j.visual||j.visual_spectrum)h+='<div class="vizrow">';
+  if(j.visual)h+=`<div><img class="viz" src="${j.visual}"><div class="caption">Amplified residual</div></div>`;
+  if(j.visual_spectrum)h+=`<div><img class="viz" src="${j.visual_spectrum}"><div class="caption">Spectrum</div></div>`;
+  if(j.visual||j.visual_spectrum)h+='</div>';
+  for(const n of j.notes||[])h+=`<p class="caption">${n}</p>`;
+  $("fileresult").innerHTML=h;
+  $("fileclean").style.display=(j.kind==="image")?"":"none";
+  if(j.kind==="text"){$("tab-text").click();$("tin").value=await file.text();textAnalyze()}
+ }catch(e){$("status").textContent="Error: "+e}
+}
+
+$("fileinput").onchange=e=>{if(e.target.files[0])analyze(e.target.files[0])};
+$("drop").ondragover=e=>e.preventDefault();
+$("drop").ondrop=e=>{e.preventDefault();if(e.dataTransfer.files[0])analyze(e.dataTransfer.files[0])};
+
+$("cleanbtn").onclick=async()=>{
+ if(!lastFile)return;
+ const fd=new FormData();fd.append("file",lastFile);fd.append("strength",$("strength").value);
+ $("status").textContent="Working…";
+ const r=await fetch("/api/clean",{method:"POST",body:fd});
+ const j=await r.json();
+ $("status").textContent="";
+ if(!r.ok){$("cleanresult").innerHTML=`<p>Error: ${j.detail}</p>`;return}
+ let h="<h3>Actions</h3><ul>"+j.actions.map(a=>`<li>${a}</li>`).join("")+"</ul>";
+ h+="<p>"+Object.entries(j.metrics).map(([k,v])=>`${k}: ${v}`).join(" · ")+"</p>";
+ h+=`<p><a href="/api/download/${j.download_id}" download="${j.filename}">Download cleaned file</a></p>`;
+ h+="<h3>After (verification)</h3>"+table(j.after);
+ $("cleanresult").innerHTML=h;
+};
+
+const OPTS=[["strip_invisible","Invisible chars",1],["strip_bidi","Bidi controls",1],
+["normalize_spaces","Unusual spaces",1],["remove_soft_hyphen","Soft hyphens",1],
+["fix_homoglyphs","Homoglyphs→Latin",1],["strip_private_use","Private-use",1],
+["normalize_whitespace","Whitespace",1],["normalize_typography","Typography",0],
+["nfkc","NFKC",0]];
+for(const[k,l,d]of OPTS)$("opts").innerHTML+=`<label><input type=checkbox data-k="${k}" ${d?"checked":""}> ${l}</label>`;
+
+let deb=null;
+$("tin").oninput=()=>{clearTimeout(deb);deb=setTimeout(textAnalyze,500)};
+$("tanalyze").onclick=textAnalyze;
+
+async function textAnalyze(){
+ const t=$("tin").value;if(!t){$("tresult").innerHTML="";return}
+ const r=await fetch("/api/text/analyze",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t})});
+ const j=await r.json();
+ $("tresult").innerHTML="<h3>Findings</h3>"+table(j.findings);
+}
+
+$("tclean").onclick=async()=>{
+ const t=$("tin").value;if(!t)return;
+ const options={};document.querySelectorAll("#opts input").forEach(c=>options[c.dataset.k]=c.checked);
+ $("status").textContent="Working…";
+ const r=await fetch("/api/text/clean",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:t,options})});
+ const j=await r.json();
+ $("status").textContent="";
+ $("tout").value=j.text;
+ $("tcleanout").style.display="";
+ $("tresult").innerHTML="<h3>Actions</h3><ul>"+j.actions.map(a=>`<li>${a}</li>`).join("")+"</ul><h3>After</h3>"+table(j.after);
+};
+
+$("tcopy").onclick=()=>navigator.clipboard.writeText($("tout").value);
+$("tdl").onclick=()=>{const b=new Blob([$("tout").value],{type:"text/plain"});const a=document.createElement("a");a.href=URL.createObjectURL(b);a.download="cleaned.txt";a.click()};
+
+fetch("/api/health").then(r=>r.json()).then(j=>{if(j.paraphrase_available)$("tpara").style.display=""});
+$("tpara").onclick=async()=>{
+ $("status").textContent="Working…";
+ const r=await fetch("/api/text/paraphrase",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({text:$("tout").value})});
+ const j=await r.json();$("status").textContent="";
+ if(r.ok)$("tout").value=j.text;else alert("Paraphrase failed: "+(j.detail||r.status));
+};
+</script>
+</body>
+</html>
