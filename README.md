@@ -28,6 +28,18 @@ huggingface.co on first use.
 Optional: `ANTHROPIC_API_KEY` (and `ANTHROPIC_MODEL`, default
 `claude-sonnet-4-5`) enables the "Paraphrase with Claude" text feature.
 
+## Deploy (Fly.io)
+
+`fly.toml` and `Dockerfile` are included — just run:
+
+```
+fly deploy
+```
+
+The image bakes the AudioSeal/WavMark model weights in at build time, so cold
+starts don't hit Hugging Face. Set `ANTHROPIC_API_KEY` via `fly secrets set`
+to enable paraphrase.
+
 ## Supported kinds
 
 | Kind | Detects | Removes |
